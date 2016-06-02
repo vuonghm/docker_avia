@@ -1,0 +1,8 @@
+## This repository is the modified version of ANNOVAR for AVIA-lite
+You will need to also download the databases from ANNOVAR
+##These files can directly be downloaded from ANNOVAR
+Make a directory for each organism e.g. humandb/ mousedb in the current directory.
+Then add db files to their respective directories
+You wil also need the following perl libraries:
+- List
+- Parallel-ForkManager-0.7.9
