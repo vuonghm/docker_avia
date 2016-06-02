@@ -1,0 +1,1 @@
+select database_annvr_name,database_shown_name,short_description,reference_idx,isPublished from avia_abcc_dbdev.Database_Info where isPublished=1 or isPublished=2

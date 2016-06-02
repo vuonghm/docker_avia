@@ -1,0 +1,162 @@
+#!/usr/bin/perl
+use strict;
+use Mail::Sendmail;
+use Getopt::Std;
+use Data::Dumper;
+umask(0000);
+use vars qw( $opt_f $opt_a $opt_h $opt_H $opt_o $opt_d $opt_g $opt_G $opt_l);
+getopts("f:H:o:d:G:l:gakh");
+#  GET vars
+my $usage=qq(
+	$0 
+	[REQUIRED]
+		-f <AVIA OUTPUT FN>
+	[OPTIONAL]
+		-o <output filename>
+		-a <if specified,do not add as column in original file> 
+			DEFAULT: replace original file with a file with col of consequence
+		-d <Number between 1-5 indicating the number of protein coding algorithms that will report "damaging">
+			DEFAULT: 2 or more databases call damaging
+		-g <generate gene list as well>
+		-G <alternative gene list filename output> DEFAULT: genelist
+		-l <label>
+	);
+print "$usage\n" and exit if (!defined $opt_f || $opt_h);
+my $avia_output_fn=$opt_f;
+my $headerFound=0;
+my (%headers,%annot,%genes);
+# Read file and continue
+$opt_o||="$opt_f.tmp";
+$opt_G||="genelist";
+my $label=(defined $opt_l)?$opt_l:"index";
+my $maxDam=($opt_d)?$opt_d:2;
+my $consequence='';
+if (defined $opt_g){
+	open (GENE,">$opt_G") or die "Cannot open genelist for writing ($opt_G)\n" ;
+	open (GENE2,">$opt_G.consequence") or die "Cannot open genelist for writing ($opt_G.consequence)\n";
+	open (GENE3,">$opt_G.codingOnly") or die "Cannot open genelist for writing ($opt_G.codingOnly)\n";
+}else{
+	die;
+}
+open (OUT,"> $opt_o") or die "Cannot open file $opt_o for writing\n";
+open (HTML,">$label.html") or die "cannot open file\n";
+open (FILE,"<$avia_output_fn") or die "cannot open your input file $avia_output_fn for reading...\n";
+print HTML "<table id='example' border='1' class=\"display\"><thead>";
+my $count=0;
+while (my $line=<FILE>){
+	chomp $line;
+	$consequence='';
+	my @colElements=split("\t",$line);
+	if ($headerFound){
+		for (my $i=0;$i<=$#colElements;$i++){
+			if ($colElements[$i]=~/(damaging|med|high|disease causing|deleterious)/i && $headers{$i}=~/(sift|pp2|ma$|mt|Mutation Taster|Mutation Assessor|Polyphen|Provean)/){
+				$consequence.="D";
+			}elsif($colElements[$i]=~/SIG=pathogenic/ && $headers{$i}=~/(ClinVar|Clinical Var)/){
+				$consequence.="V";
+			}elsif($headers{$i}=~/((P)TM|(C)osmic|(O)MIM|(O)nline Mendelian)/i && $colElements[$i]!='-' && $colElements[$i]!=''){
+				$consequence.=uc($2);
+			}
+		}
+	}elsif ($line=~/(^#|Variant ID|Summary)/){
+		$consequence="#Summary";
+		for (my $i=0;$i<=$#colElements;$i++){
+			if ($colElements[$i]=~/(sift|pp2|ma$|mt|Mutation Taster|Mutation Assessor|Polyphen|Provean|PTM|Cosmic|OMIM|Online Mendelian|ClinVar|Clinical Var)/i){
+				$headers{$i}=$1;
+			}elsif ($colElements[$i]=~/(ANNOVAR annot|Rel pos|Gene$|Annot Feat)/){
+				$annot{$1}=$i;
+			}
+		}
+		$headerFound=1;# and print Dumper (\%headers) and print Dumper (\%annot) and <STDIN>;
+	}else{
+		die "Don't know how to parse this as there is no header!\n";
+	}
+		
+	$consequence=~s/D{$maxDam,}/D/g;
+	if ($opt_g){
+		my $add='';
+		my @gene_arr=();#we do this for multiple genes
+		if ($colElements[$annot{"Gene"}]=~/^([\w\-]*)\(/){#splicing annot
+			push(@gene_arr,$1);
+		}elsif ($colElements[$annot{"Gene"}]=~/[,;]/){
+			@gene_arr=split(/[;|,]/,$colElements[$annot{"Gene"}]);
+
+		}else{
+			chop ($colElements[$annot{"Gene"}]) if ($colElements[$annot{"Gene"}]=~/;$/);
+			push(@gene_arr,$colElements[$annot{"Gene"}]);
+		}
+		# print "working on $consequence|". $colElements[$annot{"Gene"}]."|..." .$colElements[$annot{"ANNOVAR annot"}] .join (",",@gene_arr);<STDIN>;
+		# For exonic mutations
+		if ($colElements[$annot{"ANNOVAR annot"}]=~/(intronic|UTR|exonic|splic)/){
+			if ($consequence ne '') {
+				$add='consequence';
+				# print "Adding consequence...\n";
+			}
+			if ($colElements[$annot{"ANNOVAR annot"}]=~/(exonic|splic)/){
+				$add.='codingOnly';
+			}
+		}elsif ($consequence ne ""){#if this consequence is important
+			$add.='consequence';
+			# print "Adding consequence...\n";
+		}
+		foreach my $gene(@gene_arr){
+			next if ($gene=~/^\s{0,}$/);
+			$genes{$gene}{'all'}=1;
+			if ($add=~/(consequence)/){
+				$genes{$gene}{$1}=1;
+			}
+			if ($add=~/(codingOnly)/){
+				$genes{$gene}{$1}=1;
+			}
+			
+		}
+	}
+	$consequence=($consequence eq '')?"-":$consequence;
+	$consequence.="\t$line" if (!$opt_a);
+	print OUT "$consequence\n";
+	if ($consequence!~/^-/){
+		if ($consequence=~/^#/){
+			$consequence=~s/\t/<\/th><th>/g;
+			$consequence="<tr><th>".$consequence."</th></tr></thead><tbody>\n";
+		}else{
+			$consequence=~s/</&lt;/g;
+			$consequence=~s/>/&gt;/g;
+			$consequence=~s/\t/<\/td><td>/g;
+			$consequence="<tr valign='top' CLASS><td>$consequence</td></tr>\n";
+			$count++;
+			if ($count%2==0){
+				$consequence=~s/CLASS/class=\"altclr\"/;
+			}else{
+				$consequence=~s/CLASS//;
+			}
+
+		}
+		print HTML $consequence;
+	}
+}
+print HTML "</tbody></table>";
+close FILE;close HTML;
+if ($opt_g){
+	foreach my $gene (sort %genes){
+		next if $gene eq 'Gene';
+		if (exists $genes{$gene}{'all'}){
+			print GENE "$gene\n";
+		}
+		if (exists $genes{$gene}{'consequence'}){
+			print GENE2 "$gene\n";
+		}
+		if (exists $genes{$gene}{'codingOnly'}){
+			print GENE3 "$gene\n";
+		}
+
+	}
+	close GENE;close GENE2;close GENE3;
+}
+
+close OUT;exit;
+if (!defined $opt_a && $opt_o eq "$opt_f.tmp"){
+	if (-s $opt_o > -s $opt_f){
+		system ("mv $opt_o $opt_f\n");
+	}else{
+		print STDERR "[INFO] Could not add column to your input file...see tmp input file $opt_o\n";
+	}
+}

@@ -1,0 +1,75 @@
+#!/usr/bin/perl
+use strict;
+use FindBin;
+use Getopt::Std;
+use Data::Dumper;
+use vars qw($opt_o $opt_b $opt_a $opt_f $opt_m);
+getopts("a:f:o:b:m:");
+umask(0000);
+my $bin=`dirname $0`;chomp $bin;
+my $usage=qq(
+	$0
+		-a Annotation file from avia looks for exonic mutations only
+		-f biodata output file
+	[OPTIONAL]
+		-m <mapping filename>
+	);
+die "You must enter a valid file " if (!defined ($opt_f) && !defined $opt_a);
+my $in_fn;
+if (defined $opt_f){
+	$in_fn=$opt_f;
+}elsif (defined $opt_a){
+	$in_fn=$opt_a;	
+}
+
+open (ANNOT,"<$in_fn") or die "Cannot open input file $in_fn $?\n";
+$opt_o||= "$in_fn.prot";
+my %mapping;
+if ($opt_m){
+	open (MAP,"<$opt_m") or die "Cannot open mapping $opt_m\n";
+	while (<MAP>){
+		chomp;
+		next if ($_=~/^\s+$/);
+		my @arr=split ("\t",$_);
+		$mapping{$arr[0]}=$arr[1];
+	}
+}
+open (OUTPUT,">$opt_o") or die "Cannot open output file $opt_o\n";
+if (defined $opt_a){
+	my $count=my $cdsCount=0;my %prothash;
+	while (my $line=<ANNOT>){
+		$count++;
+		if ($line=~/(stopgain_SNV|stoploss_SNV|nonsynonymous SNV):(\S+)/){
+			my @annot=split(",",$2);$cdsCount++;my $myline;
+			if ($opt_m && $line=~/((chr){0,1}[\dXYMT]{1,}[\t:]\d+[\t:]\d+[:\t][ATCG][\t:][ATCG])/){
+				$myline=$1;
+			}
+			foreach my $feat (@annot){
+				if ($feat=~/([\w\-\*]+):.*:p\.([\w\*]+):?/){
+					push (@{$prothash{"$1:$2"}},$myline);
+					# print MAP "$1:$2\t$myline\n" if ($opt_m);
+				}else{
+					die "Couldnt parse $feat...\n";
+				}
+			}
+
+		}
+	}
+	foreach my $id (keys %prothash){
+			if ($opt_m){
+				my ($gene,$prot_pos)=split(":",$id);
+				if (exists $mapping{$gene}){
+					print OUTPUT "$mapping{$gene}:$prot_pos\n";
+				}
+			}else{
+				print OUTPUT "$id\n";
+			}
+		}
+	print "Found $cdsCount out of $count\n";
+	close OUTPUT;close ANNOT;
+}else{
+	print "converting json from biodata\n";
+	while (/JSON:/ .. /\n/){
+		print $_;
+	}
+}
